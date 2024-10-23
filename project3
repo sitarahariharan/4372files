@@ -1,0 +1,134 @@
+# Import necessary libraries
+import os
+import numpy as np
+import matplotlib.pyplot as plt
+import tensorflow as tf
+from tensorflow.keras.preprocessing.image import ImageDataGenerator
+from tensorflow.keras.applications import MobileNetV2
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Dense, Flatten
+from tensorflow.keras.callbacks import EarlyStopping
+from sklearn.model_selection import train_test_split
+
+# Set the base directory where your dataset is located
+base_dir = 'dataset/'  # Adjust if your dataset is in a different location
+train_glasses_dir = os.path.join(base_dir, 'train-glasses')
+train_noglasses_dir = os.path.join(base_dir, 'train-noglasses')
+test_dir = os.path.join(base_dir, 'test')
+
+# Parameters
+img_size = (224, 224)
+batch_size = 32
+epochs = 20
+train_ratio = 0.8
+
+# Data Preparation
+train_data = []
+labels = []
+
+for img_dir, label in [(train_glasses_dir, 1), (train_noglasses_dir, 0)]:
+    for img in os.listdir(img_dir):
+        img_path = os.path.join(img_dir, img)
+        train_data.append(img_path)
+        labels.append(label)
+
+train_data = np.array(train_data)
+labels = np.array(labels)
+
+# Split data into train and validation sets
+train_data, val_data, train_labels, val_labels = train_test_split(
+    train_data, labels, test_size=(1 - train_ratio), random_state=42
+)
+
+# ImageDataGenerator
+datagen = ImageDataGenerator(rescale=1./255, validation_split=0.2)
+
+train_generator = datagen.flow_from_directory(
+    base_dir,
+    target_size=img_size,
+    batch_size=batch_size,
+    class_mode='binary',
+    subset='training',
+    shuffle=True
+)
+
+validation_generator = datagen.flow_from_directory(
+    base_dir,
+    target_size=img_size,
+    batch_size=batch_size,
+    class_mode='binary',
+    subset='validation',
+    shuffle=False
+)
+
+# Model Definition
+base_model = MobileNetV2(weights='imagenet', include_top=False, input_shape=(224, 224, 3))
+base_model.trainable = False  # Freeze the base model
+
+model = Sequential([
+    base_model,
+    Flatten(),
+    Dense(128, activation='relu'),
+    Dense(1, activation='sigmoid')
+])
+
+model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
+
+# Callbacks
+early_stopping = EarlyStopping(monitor='val_loss', patience=3, restore_best_weights=True)
+
+# Model Training
+history = model.fit(
+    train_generator,
+    validation_data=validation_generator,
+    epochs=epochs,
+    callbacks=[early_stopping]
+)
+
+# Plotting training history
+def plot_history(history):
+    plt.figure(figsize=(12, 4))
+
+    # Plot training & validation accuracy values
+    plt.subplot(1, 2, 1)
+    plt.plot(history.history['accuracy'], label='Train Accuracy')
+    plt.plot(history.history['val_accuracy'], label='Validation Accuracy')
+    plt.title('Model accuracy')
+    plt.ylabel('Accuracy')
+    plt.xlabel('Epoch')
+    plt.legend(loc='upper left')
+
+    # Plot training & validation loss values
+    plt.subplot(1, 2, 2)
+    plt.plot(history.history['loss'], label='Train Loss')
+    plt.plot(history.history['val_loss'], label='Validation Loss')
+    plt.title('Model loss')
+    plt.ylabel('Loss')
+    plt.xlabel('Epoch')
+    plt.legend(loc='upper left')
+
+    plt.show()
+
+plot_history(history)
+
+# Testing on test dataset
+test_datagen = ImageDataGenerator(rescale=1./255)
+test_generator = test_datagen.flow_from_directory(
+    base_dir,
+    target_size=img_size,
+    batch_size=1,
+    class_mode='binary',
+    subset='testing',
+    shuffle=False
+)
+
+predictions = model.predict(test_generator)
+predicted_classes = np.round(predictions).astype(int)
+
+# Display some test results
+for i in range(25):
+    img, label = test_generator.next()
+    plt.imshow(img[0])
+    plt.title(f'True: {label[0]}, Predicted: {predicted_classes[i][0]}')
+    plt.axis('off')
+    plt.show()
